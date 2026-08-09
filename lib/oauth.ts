@@ -78,6 +78,9 @@ export function registerOAuthClient(input: {
   }
 
   const authMethod = input.token_endpoint_auth_method || "client_secret_post";
+  if (!["client_secret_basic", "client_secret_post", "none"].includes(authMethod)) {
+    throw new Error("unsupported token_endpoint_auth_method");
+  }
   const clientId = signToken(
     "oauth_client",
     {
@@ -111,7 +114,13 @@ export function verifyOAuthClient(clientId: string): ClientPayload {
 }
 
 export function verifyOAuthClientSecret(clientId: string, clientSecret?: string): void {
-  if (!clientSecret) return;
+  const client = verifyOAuthClient(clientId);
+  const method = client.token_endpoint_auth_method || "client_secret_post";
+  if (method === "none") {
+    if (clientSecret) throw new Error("invalid_client");
+    return;
+  }
+  if (!clientSecret) throw new Error("invalid_client");
   const payload = verifyToken<ClientSecretPayload>(clientSecret, "oauth_client_secret");
   if (!safeEqual(payload.client_hash, sha256(clientId))) throw new Error("invalid_client");
 }
@@ -168,7 +177,14 @@ export function refreshBridgeToken(input: {
   verifyOAuthClientSecret(input.clientId, input.clientSecret);
   const refresh = verifyToken<RefreshPayload>(input.refreshToken, "bridge_refresh");
   if (!safeEqual(refresh.client_id, input.clientId)) throw new Error("invalid_grant");
-  return issueTokens(input.clientId, input.scope ? normalizeScope(input.scope) : refresh.scope);
+
+  const originalScope = normalizeScope(refresh.scope);
+  const requestedScope = input.scope ? normalizeScope(input.scope) : originalScope;
+  const original = new Set(originalScope.split(/\s+/).filter(Boolean));
+  const requested = requestedScope.split(/\s+/).filter(Boolean);
+  if (requested.some((scope) => !original.has(scope))) throw new Error("invalid_scope");
+
+  return issueTokens(input.clientId, requestedScope);
 }
 
 function normalizeScope(scope: string): string {
