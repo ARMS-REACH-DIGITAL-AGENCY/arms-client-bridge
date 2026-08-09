@@ -61,16 +61,40 @@ function locationPitMap(): Record<string, string> {
   return parsed;
 }
 
-function validatePath(path: string): string {
+function decodePathname(value: string): string {
+  let decoded = value;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded.toLowerCase();
+}
+
+function buildHighLevelUrl(path: string): { path: string; url: URL } {
   const trimmed = path.trim();
   if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.includes("://")) {
     throw new Error("path must be a relative HighLevel API path beginning with /");
   }
-  const normalized = trimmed.toLowerCase();
-  if (normalized === "/oauth" || normalized.startsWith("/oauth/")) {
+  if (trimmed.includes("\\") || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw new Error("path contains unsupported characters");
+  }
+
+  const url = new URL(`${HIGHLEVEL_BASE_URL}${trimmed}`);
+  if (url.origin !== HIGHLEVEL_BASE_URL) {
+    throw new Error("HighLevel requests are restricted to services.leadconnectorhq.com");
+  }
+
+  const normalizedPathname = decodePathname(url.pathname);
+  if (normalizedPathname === "/oauth" || normalizedPathname.startsWith("/oauth/")) {
     throw new Error("OAuth/token endpoints are blocked from the generic bridge tools");
   }
-  return trimmed;
+
+  return { path: trimmed, url };
 }
 
 function redact(value: unknown, depth = 0): unknown {
@@ -197,11 +221,12 @@ function addQuery(url: URL, query?: Record<string, QueryValue>): void {
 
 export async function highLevelRequest(options: RequestOptions): Promise<JsonObject> {
   const method = options.method ?? "GET";
-  const path = validatePath(options.path);
+  const built = buildHighLevelUrl(options.path);
+  const path = built.path;
+  const url = built.url;
   const authMode = options.authMode ?? "location";
   const resolvedLocationId = options.locationId?.trim() || defaultLocationId();
   const token = await resolveToken(authMode, resolvedLocationId);
-  const url = new URL(`${HIGHLEVEL_BASE_URL}${path}`);
   addQuery(url, options.query);
 
   const headers: Record<string, string> = {
