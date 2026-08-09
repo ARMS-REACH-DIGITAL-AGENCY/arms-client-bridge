@@ -9,6 +9,7 @@ const REQUEST_HEADERS = [
   "authorization",
   "accept",
   "content-type",
+  "mcp-protocol-version",
   "mcp-session-id",
   "last-event-id",
   "locationid",
@@ -41,7 +42,10 @@ async function proxy(request: NextRequest): Promise<Response> {
     body = await request.arrayBuffer();
   }
 
-  const upstream = await fetch(UPSTREAM_MCP_URL, {
+  const upstreamUrl = new URL(UPSTREAM_MCP_URL);
+  upstreamUrl.search = request.nextUrl.search;
+
+  const upstream = await fetch(upstreamUrl, {
     method: request.method,
     headers,
     body,
