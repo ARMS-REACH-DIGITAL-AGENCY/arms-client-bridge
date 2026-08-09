@@ -153,9 +153,6 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
     );
   }
 
-  // HighLevel's documented agency -> location exchange. A Private Integration
-  // Token is a fixed OAuth2 access token; if the agency PIT is not accepted by
-  // this endpoint, configure a location PIT in HIGHLEVEL_LOCATION_PITS instead.
   const form = new URLSearchParams({ companyId: agencyCompanyId, locationId });
   const response = await fetch(`${HIGHLEVEL_BASE_URL}/oauth/locationToken`, {
     method: "POST",
@@ -219,6 +216,12 @@ function addQuery(url: URL, query?: Record<string, QueryValue>): void {
   }
 }
 
+function inferredVersion(path: string, explicit?: string): string {
+  if (explicit?.trim()) return explicit.trim();
+  if (path === "/locations/search" || /^\/locations\/[^/]+$/.test(path)) return "v3";
+  return "2021-07-28";
+}
+
 export async function highLevelRequest(options: RequestOptions): Promise<JsonObject> {
   const method = options.method ?? "GET";
   const built = buildHighLevelUrl(options.path);
@@ -232,7 +235,7 @@ export async function highLevelRequest(options: RequestOptions): Promise<JsonObj
   const headers: Record<string, string> = {
     Accept: "application/json",
     Authorization: `Bearer ${token}`,
-    Version: options.version?.trim() || "2021-07-28",
+    Version: inferredVersion(path, options.version),
   };
 
   const init: RequestInit = { method, headers, cache: "no-store" };
@@ -276,8 +279,22 @@ export async function listLocations(search?: string, limit = 100): Promise<JsonO
     path: "/locations/search",
     authMode: "agency",
     query,
-    version: "2021-07-28",
+    version: "v3",
     maxChars: 120_000,
+  });
+}
+
+export async function verifyConfiguredLocation(locationId?: string): Promise<JsonObject> {
+  const resolvedLocationId = locationId?.trim() || defaultLocationId();
+  if (!resolvedLocationId) throw new Error("No location_id supplied and no default location is configured");
+
+  return highLevelRequest({
+    method: "GET",
+    path: `/locations/${encodeURIComponent(resolvedLocationId)}`,
+    locationId: resolvedLocationId,
+    authMode: "location",
+    version: "v3",
+    maxChars: 40_000,
   });
 }
 
