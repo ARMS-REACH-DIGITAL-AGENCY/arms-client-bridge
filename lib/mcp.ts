@@ -1,4 +1,4 @@
-import { bridgeHighLevelStatus, highLevelRequest, listLocations } from "./highlevel";
+import { bridgeHighLevelStatus, highLevelRequest, listLocations, verifyConfiguredLocation } from "./highlevel";
 
 export type McpRequest = {
   jsonrpc?: string;
@@ -29,12 +29,26 @@ const tools = [
     name: "arms_list_locations",
     title: "List ARMS Sub-Accounts",
     description:
-      "List or search HighLevel sub-accounts accessible to the configured ARMS agency credential. Use this to resolve a client/location ID before making location-scoped requests.",
+      "List or search HighLevel sub-accounts accessible to the configured ARMS agency credential. Uses HighLevel's v3 sub-account search endpoint.",
     inputSchema: {
       type: "object",
       properties: {
         search: { type: "string", description: "Optional location name/email search text." },
         limit: { type: "integer", minimum: 1, maximum: 100, default: 100 },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_verify_location",
+    title: "Verify ARMS Client Location",
+    description:
+      "Verify a configured HighLevel client/sub-account using its location-scoped credential. If location_id is omitted, verifies the bridge default location. Useful for proving direct client access independently of agency-level location search.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        location_id: { type: "string", description: "Optional HighLevel location ID. Defaults to HIGHLEVEL_DEFAULT_LOCATION_ID." },
       },
       additionalProperties: false,
     },
@@ -53,7 +67,7 @@ const tools = [
         location_id: { type: "string", description: "HighLevel sub-account/location ID. Optional when a default location is configured." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
         query: { type: "object", description: "Query-string parameters.", additionalProperties: true },
-        version: { type: "string", default: "2021-07-28", description: "HighLevel Version header, such as 2021-07-28, 2023-02-21, or v3." },
+        version: { type: "string", description: "Optional HighLevel Version header override. Location search/details default to v3; other endpoints default to 2021-07-28." },
         max_chars: { type: "integer", minimum: 1000, maximum: 150000, default: 80000 },
       },
       additionalProperties: false,
@@ -75,7 +89,7 @@ const tools = [
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
         query: { type: "object", description: "Query-string parameters.", additionalProperties: true },
         body: { description: "JSON request body. Omit when the endpoint requires no body." },
-        version: { type: "string", default: "2021-07-28", description: "HighLevel Version header, such as 2021-07-28, 2023-02-21, or v3." },
+        version: { type: "string", description: "Optional HighLevel Version header override. Location search/details default to v3; other endpoints default to 2021-07-28." },
         max_chars: { type: "integer", minimum: 1000, maximum: 150000, default: 80000 },
       },
       additionalProperties: false,
@@ -103,11 +117,15 @@ function hasScope(scope: string | undefined, required: "arms.read" | "arms.write
 async function callTool(name: string, args: Record<string, unknown>, scope?: string): Promise<unknown> {
   if (name === "arms_status") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
-    return { service: "arms-client-bridge", version: "0.2.0", ...bridgeHighLevelStatus() };
+    return { service: "arms-client-bridge", version: "0.2.1", ...bridgeHighLevelStatus() };
   }
   if (name === "arms_list_locations") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
     return listLocations(stringArg(args.search), numberArg(args.limit, 100));
+  }
+  if (name === "arms_verify_location") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return verifyConfiguredLocation(stringArg(args.location_id));
   }
   if (name === "arms_highlevel_get") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
@@ -138,7 +156,7 @@ export async function handleMcpRequest(request: McpRequest, scope?: string): Pro
     return ok(request, {
       protocolVersion: requestedVersion,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "ARMS Client Bridge", version: "0.2.0" },
+      serverInfo: { name: "ARMS Client Bridge", version: "0.2.1" },
       instructions: "Internal ARMS bridge for HighLevel agency and client sub-account operations. Read current state before writes. Use location-scoped auth for client CRM data and agency-scoped auth for agency resources.",
     });
   }
