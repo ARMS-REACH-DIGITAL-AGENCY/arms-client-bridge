@@ -53,12 +53,12 @@ export async function POST(request: Request) {
   };
 
   if (Array.isArray(payload)) {
-    const results = (await Promise.all(payload.map((item) => handleMcpRequest(item)))).filter(Boolean);
+    const results = (await Promise.all(payload.map((item) => handleMcpRequest(item, auth.scope)))).filter(Boolean);
     if (results.length === 0) return new Response(null, { status: 202, headers });
     return Response.json(results, { headers });
   }
 
-  const result = await handleMcpRequest(payload);
+  const result = await handleMcpRequest(payload, auth.scope);
   if (!result) return new Response(null, { status: 202, headers });
   return Response.json(result, { headers });
 }
