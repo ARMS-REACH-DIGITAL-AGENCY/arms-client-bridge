@@ -22,17 +22,8 @@ const tools = [
     title: "ARMS Bridge Status",
     description:
       "Check whether the ARMS Client Bridge is configured for HighLevel agency and sub-account access. Returns configuration flags only; never returns secrets.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "arms_list_locations",
@@ -47,12 +38,7 @@ const tools = [
       },
       additionalProperties: false,
     },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "arms_highlevel_get",
@@ -72,12 +58,7 @@ const tools = [
       },
       additionalProperties: false,
     },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "arms_highlevel_mutate",
@@ -99,139 +80,82 @@ const tools = [
       },
       additionalProperties: false,
     },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false,
-    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
 ] as const;
 
-function idOf(request: McpRequest): string | number | null {
-  return request.id ?? null;
-}
-
-function ok(request: McpRequest, result: unknown): McpResponse {
-  return { jsonrpc: "2.0", id: idOf(request), result };
-}
-
+function idOf(request: McpRequest): string | number | null { return request.id ?? null; }
+function ok(request: McpRequest, result: unknown): McpResponse { return { jsonrpc: "2.0", id: idOf(request), result }; }
 function fail(request: McpRequest, code: number, message: string, data?: unknown): McpResponse {
   return { jsonrpc: "2.0", id: idOf(request), error: { code, message, ...(data === undefined ? {} : { data }) } };
 }
-
-function numberArg(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function stringArg(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
+function numberArg(value: unknown, fallback: number): number { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
+function stringArg(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined; }
 function objectArg(value: unknown): Record<string, string | number | boolean | null | undefined | Array<string | number | boolean>> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, string | number | boolean | null | undefined | Array<string | number | boolean>>)
     : undefined;
 }
+function hasScope(scope: string | undefined, required: "arms.read" | "arms.write"): boolean {
+  return new Set((scope ?? "").split(/\s+/).filter(Boolean)).has(required);
+}
 
-async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+async function callTool(name: string, args: Record<string, unknown>, scope?: string): Promise<unknown> {
   if (name === "arms_status") {
-    return {
-      service: "arms-client-bridge",
-      version: "0.2.0",
-      ...bridgeHighLevelStatus(),
-    };
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return { service: "arms-client-bridge", version: "0.2.0", ...bridgeHighLevelStatus() };
   }
-
   if (name === "arms_list_locations") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
     return listLocations(stringArg(args.search), numberArg(args.limit, 100));
   }
-
   if (name === "arms_highlevel_get") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
     const path = stringArg(args.path);
     if (!path) throw new Error("path is required");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";
-    return highLevelRequest({
-      method: "GET",
-      path,
-      locationId: stringArg(args.location_id),
-      authMode,
-      query: objectArg(args.query),
-      version: stringArg(args.version),
-      maxChars: numberArg(args.max_chars, 80_000),
-    });
+    return highLevelRequest({ method: "GET", path, locationId: stringArg(args.location_id), authMode, query: objectArg(args.query), version: stringArg(args.version), maxChars: numberArg(args.max_chars, 80_000) });
   }
-
   if (name === "arms_highlevel_mutate") {
+    if (!hasScope(scope, "arms.write")) throw new Error("insufficient_scope: arms.write is required");
     const path = stringArg(args.path);
     const method = stringArg(args.method)?.toUpperCase();
     if (!path) throw new Error("path is required");
-    if (!method || !["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-      throw new Error("method must be POST, PUT, PATCH, or DELETE");
-    }
+    if (!method || !["POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("method must be POST, PUT, PATCH, or DELETE");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";
-    return highLevelRequest({
-      method: method as "POST" | "PUT" | "PATCH" | "DELETE",
-      path,
-      locationId: stringArg(args.location_id),
-      authMode,
-      query: objectArg(args.query),
-      body: args.body,
-      version: stringArg(args.version),
-      maxChars: numberArg(args.max_chars, 80_000),
-    });
+    return highLevelRequest({ method: method as "POST" | "PUT" | "PATCH" | "DELETE", path, locationId: stringArg(args.location_id), authMode, query: objectArg(args.query), body: args.body, version: stringArg(args.version), maxChars: numberArg(args.max_chars, 80_000) });
   }
-
   throw new Error(`Unknown tool: ${name}`);
 }
 
-function textContent(value: unknown): Array<{ type: "text"; text: string }> {
-  return [{ type: "text", text: JSON.stringify(value, null, 2) }];
-}
+function textContent(value: unknown): Array<{ type: "text"; text: string }> { return [{ type: "text", text: JSON.stringify(value, null, 2) }]; }
 
-export async function handleMcpRequest(request: McpRequest): Promise<McpResponse | null> {
-  if (request.jsonrpc !== "2.0" || !request.method) {
-    return fail(request, -32600, "Invalid Request");
-  }
-
-  if (request.method === "notifications/initialized" || request.method.startsWith("notifications/")) {
-    return null;
-  }
-
+export async function handleMcpRequest(request: McpRequest, scope?: string): Promise<McpResponse | null> {
+  if (request.jsonrpc !== "2.0" || !request.method) return fail(request, -32600, "Invalid Request");
+  if (request.method === "notifications/initialized" || request.method.startsWith("notifications/")) return null;
   if (request.method === "initialize") {
     const requestedVersion = stringArg(request.params?.protocolVersion) ?? PROTOCOL_VERSION;
     return ok(request, {
       protocolVersion: requestedVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: "ARMS Client Bridge", version: "0.2.0" },
-      instructions:
-        "Internal ARMS bridge for HighLevel agency and client sub-account operations. Read current state before writes. Use location-scoped auth for client CRM data and agency-scoped auth for agency resources.",
+      instructions: "Internal ARMS bridge for HighLevel agency and client sub-account operations. Read current state before writes. Use location-scoped auth for client CRM data and agency-scoped auth for agency resources.",
     });
   }
-
   if (request.method === "ping") return ok(request, {});
-
-  if (request.method === "tools/list") {
-    return ok(request, { tools });
-  }
-
+  if (request.method === "tools/list") return ok(request, { tools });
   if (request.method === "tools/call") {
     const name = stringArg(request.params?.name);
-    const args =
-      request.params?.arguments && typeof request.params.arguments === "object" && !Array.isArray(request.params.arguments)
-        ? (request.params.arguments as Record<string, unknown>)
-        : {};
+    const args = request.params?.arguments && typeof request.params.arguments === "object" && !Array.isArray(request.params.arguments)
+      ? (request.params.arguments as Record<string, unknown>) : {};
     if (!name) return fail(request, -32602, "Tool name is required");
-
     try {
-      const value = await callTool(name, args);
+      const value = await callTool(name, args, scope);
       return ok(request, { content: textContent(value), isError: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tool execution failed";
       return ok(request, { content: textContent({ error: message }), isError: true });
     }
   }
-
   return fail(request, -32601, `Method not found: ${request.method}`);
 }
