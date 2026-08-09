@@ -1,82 +1,64 @@
-import { NextRequest } from "next/server";
+import { authorizeBridgeRequest, unauthorizedResponse } from "../../lib/bridge-auth";
+import { handleMcpRequest, type McpRequest } from "../../lib/mcp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const UPSTREAM_MCP_URL = "https://services.leadconnectorhq.com/mcp/";
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, MCP-Protocol-Version, Mcp-Session-Id",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
 
-const REQUEST_HEADERS = [
-  "authorization",
-  "accept",
-  "content-type",
-  "mcp-protocol-version",
-  "mcp-session-id",
-  "last-event-id",
-  "locationid",
-  "location-id",
-] as const;
-
-const RESPONSE_HEADERS = [
-  "content-type",
-  "cache-control",
-  "mcp-session-id",
-  "www-authenticate",
-  "location",
-] as const;
-
-async function proxy(request: NextRequest): Promise<Response> {
-  const headers = new Headers();
-
-  for (const name of REQUEST_HEADERS) {
-    const value = request.headers.get(name);
-    if (value) headers.set(name, value);
-  }
-
-  // MCP clients commonly negotiate both JSON and Server-Sent Events.
-  if (!headers.has("accept")) {
-    headers.set("accept", "application/json, text/event-stream");
-  }
-
-  let body: ArrayBuffer | undefined;
-  if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "DELETE") {
-    body = await request.arrayBuffer();
-  }
-
-  const upstreamUrl = new URL(UPSTREAM_MCP_URL);
-  upstreamUrl.search = request.nextUrl.search;
-
-  const upstream = await fetch(upstreamUrl, {
-    method: request.method,
-    headers,
-    body,
-    redirect: "manual",
-    cache: "no-store",
-  });
-
-  const responseHeaders = new Headers();
-  for (const name of RESPONSE_HEADERS) {
-    const value = upstream.headers.get(name);
-    if (value) responseHeaders.set(name, value);
-  }
-
-  // Make the proxy identity explicit without changing the MCP payload.
-  responseHeaders.set("x-arms-client-bridge", "leadconnector-mcp-proxy");
-
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: responseHeaders,
-  });
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
 }
 
-export async function GET(request: NextRequest) {
-  return proxy(request);
+export async function GET() {
+  return Response.json(
+    {
+      ok: true,
+      service: "arms-client-bridge",
+      transport: "streamable-http",
+      endpoint: "/mcp",
+      note: "Use POST with MCP JSON-RPC requests.",
+    },
+    { headers: { ...corsHeaders, "Cache-Control": "no-store" } },
+  );
 }
 
-export async function POST(request: NextRequest) {
-  return proxy(request);
-}
+export async function POST(request: Request) {
+  const auth = authorizeBridgeRequest(request);
+  if (!auth.ok) {
+    const response = unauthorizedResponse(request);
+    Object.entries(corsHeaders).forEach(([key, value]) => response.headers.set(key, value));
+    return response;
+  }
 
-export async function DELETE(request: NextRequest) {
-  return proxy(request);
+  let payload: McpRequest | McpRequest[];
+  try {
+    payload = (await request.json()) as McpRequest | McpRequest[];
+  } catch {
+    return Response.json(
+      { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
+      { status: 400, headers: corsHeaders },
+    );
+  }
+
+  const protocolVersion = request.headers.get("mcp-protocol-version") ?? "2025-06-18";
+  const headers = {
+    ...corsHeaders,
+    "Cache-Control": "no-store",
+    "MCP-Protocol-Version": protocolVersion,
+  };
+
+  if (Array.isArray(payload)) {
+    const results = (await Promise.all(payload.map((item) => handleMcpRequest(item)))).filter(Boolean);
+    if (results.length === 0) return new Response(null, { status: 202, headers });
+    return Response.json(results, { headers });
+  }
+
+  const result = await handleMcpRequest(payload);
+  if (!result) return new Response(null, { status: 202, headers });
+  return Response.json(result, { headers });
 }
