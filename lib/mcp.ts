@@ -63,7 +63,7 @@ const tools = [
       type: "object",
       required: ["path"],
       properties: {
-        path: { type: "string", pattern: "^/", description: "HighLevel API path beginning with /." },
+        path: { type: "string", pattern: "^/.*$", description: "HighLevel API path beginning with /." },
         location_id: { type: "string", description: "HighLevel sub-account/location ID. Optional when a default location is configured." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
         query: { type: "object", description: "Query-string parameters.", additionalProperties: true },
@@ -84,7 +84,7 @@ const tools = [
       required: ["method", "path"],
       properties: {
         method: { type: "string", enum: ["POST", "PUT", "PATCH", "DELETE"] },
-        path: { type: "string", pattern: "^/", description: "HighLevel API path beginning with /." },
+        path: { type: "string", pattern: "^/.*$", description: "HighLevel API path beginning with /." },
         location_id: { type: "string", description: "HighLevel sub-account/location ID. Optional when a default location is configured." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
         query: { type: "object", description: "Query-string parameters.", additionalProperties: true },
@@ -117,7 +117,7 @@ function hasScope(scope: string | undefined, required: "arms.read" | "arms.write
 async function callTool(name: string, args: Record<string, unknown>, scope?: string): Promise<unknown> {
   if (name === "arms_status") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
-    return { service: "arms-client-bridge", version: "0.2.1", ...bridgeHighLevelStatus() };
+    return { service: "arms-client-bridge", version: "0.2.2", ...bridgeHighLevelStatus() };
   }
   if (name === "arms_list_locations") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
@@ -156,7 +156,7 @@ export async function handleMcpRequest(request: McpRequest, scope?: string): Pro
     return ok(request, {
       protocolVersion: requestedVersion,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "ARMS Client Bridge", version: "0.2.1" },
+      serverInfo: { name: "ARMS Client Bridge", version: "0.2.2" },
       instructions: "Internal ARMS bridge for HighLevel agency and client sub-account operations. Read current state before writes. Use location-scoped auth for client CRM data and agency-scoped auth for agency resources.",
     });
   }
