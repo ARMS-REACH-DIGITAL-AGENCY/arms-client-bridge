@@ -1,4 +1,15 @@
-import { bridgeHighLevelStatus, highLevelRequest, listLocations, verifyConfiguredLocation } from "./highlevel";
+import {
+  bridgeHighLevelStatus,
+  getContact,
+  highLevelRequest,
+  listCalendars,
+  listContacts,
+  listCustomFields,
+  listLocations,
+  listProducts,
+  listWorkflows,
+  verifyLocation,
+} from "./highlevel";
 
 export type McpRequest = {
   jsonrpc?: string;
@@ -15,25 +26,29 @@ export type McpResponse = {
 };
 
 const PROTOCOL_VERSION = "2025-06-18";
+const SERVER_VERSION = "0.3.0";
+
+const locationIdProperty = {
+  type: "string",
+  description: "HighLevel client/sub-account location ID. Required for every client-scoped operation.",
+} as const;
 
 const tools = [
   {
     name: "arms_status",
     title: "ARMS Bridge Status",
-    description:
-      "Check whether the ARMS Client Bridge is configured for HighLevel agency and sub-account access. Returns configuration flags only; never returns secrets.",
+    description: "Check agency-level HighLevel bridge readiness and fallback configuration. Never returns secrets.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "arms_list_locations",
-    title: "List ARMS Sub-Accounts",
-    description:
-      "List or search HighLevel sub-accounts accessible to the configured ARMS agency credential. Uses HighLevel's v3 sub-account search endpoint.",
+    title: "List ARMS Clients",
+    description: "List or search HighLevel sub-accounts accessible to the ARMS agency credential.",
     inputSchema: {
       type: "object",
       properties: {
-        search: { type: "string", description: "Optional location name/email search text." },
+        search: { type: "string", description: "Optional client name/email search text." },
         limit: { type: "integer", minimum: 1, maximum: 100, default: 100 },
       },
       additionalProperties: false,
@@ -42,13 +57,100 @@ const tools = [
   },
   {
     name: "arms_verify_location",
-    title: "Verify ARMS Client Location",
-    description:
-      "Verify a configured HighLevel client/sub-account using its location-scoped credential. If location_id is omitted, verifies the bridge default location. Useful for proving direct client access independently of agency-level location search.",
+    title: "Verify ARMS Client",
+    description: "Verify direct access to one explicit HighLevel client/sub-account.",
     inputSchema: {
       type: "object",
+      required: ["location_id"],
+      properties: { location_id: locationIdProperty },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_list_contacts",
+    title: "List Client Contacts",
+    description: "List recent contacts in one HighLevel client/sub-account. Optionally search by name, email, or phone text supported by HighLevel.",
+    inputSchema: {
+      type: "object",
+      required: ["location_id"],
       properties: {
-        location_id: { type: "string", description: "Optional HighLevel location ID. Defaults to HIGHLEVEL_DEFAULT_LOCATION_ID." },
+        location_id: locationIdProperty,
+        search: { type: "string", description: "Optional contact search text." },
+        limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_get_contact",
+    title: "Get Client Contact",
+    description: "Read one contact from one HighLevel client/sub-account.",
+    inputSchema: {
+      type: "object",
+      required: ["location_id", "contact_id"],
+      properties: {
+        location_id: locationIdProperty,
+        contact_id: { type: "string", description: "HighLevel contact ID." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_list_workflows",
+    title: "List Client Workflows",
+    description: "List workflows for one HighLevel client/sub-account.",
+    inputSchema: {
+      type: "object",
+      required: ["location_id"],
+      properties: { location_id: locationIdProperty },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_list_custom_fields",
+    title: "List Client Custom Fields",
+    description: "List custom fields for one HighLevel client/sub-account.",
+    inputSchema: {
+      type: "object",
+      required: ["location_id"],
+      properties: {
+        location_id: locationIdProperty,
+        model: { type: "string", default: "contact", description: "HighLevel field model, normally contact." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_list_calendars",
+    title: "List Client Calendars",
+    description: "List calendars for one HighLevel client/sub-account.",
+    inputSchema: {
+      type: "object",
+      required: ["location_id"],
+      properties: {
+        location_id: locationIdProperty,
+        show_drafted: { type: "boolean", default: true },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: "arms_list_products",
+    title: "List Client Products",
+    description: "List products for one HighLevel client/sub-account.",
+    inputSchema: {
+      type: "object",
+      required: ["location_id"],
+      properties: {
+        location_id: locationIdProperty,
+        search: { type: "string", description: "Optional product search text." },
+        limit: { type: "integer", minimum: 1, maximum: 100, default: 100 },
       },
       additionalProperties: false,
     },
@@ -56,18 +158,17 @@ const tools = [
   },
   {
     name: "arms_highlevel_get",
-    title: "Read HighLevel API",
-    description:
-      "Perform a read-only GET request against the official HighLevel API through the ARMS bridge. The path must be relative (for example /contacts/ or /calendars/). OAuth/token endpoints are blocked. Use auth_mode=location for client CRM data and auth_mode=agency for agency-level endpoints.",
+    title: "Read HighLevel API (Advanced)",
+    description: "Advanced fallback GET against the official HighLevel API. Prefer the typed ARMS tools above.",
     inputSchema: {
       type: "object",
       required: ["path"],
       properties: {
-        path: { type: "string", pattern: "^/.*$", description: "HighLevel API path beginning with /." },
-        location_id: { type: "string", description: "HighLevel sub-account/location ID. Optional when a default location is configured." },
+        path: { type: "string", description: "Relative HighLevel API path beginning with /." },
+        location_id: { type: "string", description: "Required for location-scoped requests." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
-        query: { type: "object", description: "Query-string parameters.", additionalProperties: true },
-        version: { type: "string", description: "Optional HighLevel Version header override. Location search/details default to v3; other endpoints default to 2021-07-28." },
+        query: { type: "object", additionalProperties: true },
+        version: { type: "string" },
         max_chars: { type: "integer", minimum: 1000, maximum: 150000, default: 80000 },
       },
       additionalProperties: false,
@@ -76,20 +177,19 @@ const tools = [
   },
   {
     name: "arms_highlevel_mutate",
-    title: "Modify HighLevel API",
-    description:
-      "Perform an approved HighLevel write operation (POST, PUT, PATCH, or DELETE) through the ARMS bridge. Use only after reading the current object/configuration and confirming the intended change. OAuth/token endpoints are blocked.",
+    title: "Modify HighLevel API (Advanced)",
+    description: "Advanced approved write operation against HighLevel. Read current state first and prefer future typed write tools when available.",
     inputSchema: {
       type: "object",
       required: ["method", "path"],
       properties: {
         method: { type: "string", enum: ["POST", "PUT", "PATCH", "DELETE"] },
-        path: { type: "string", pattern: "^/.*$", description: "HighLevel API path beginning with /." },
-        location_id: { type: "string", description: "HighLevel sub-account/location ID. Optional when a default location is configured." },
+        path: { type: "string", description: "Relative HighLevel API path beginning with /." },
+        location_id: { type: "string", description: "Required for location-scoped requests." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
-        query: { type: "object", description: "Query-string parameters.", additionalProperties: true },
-        body: { description: "JSON request body. Omit when the endpoint requires no body." },
-        version: { type: "string", description: "Optional HighLevel Version header override. Location search/details default to v3; other endpoints default to 2021-07-28." },
+        query: { type: "object", additionalProperties: true },
+        body: {},
+        version: { type: "string" },
         max_chars: { type: "integer", minimum: 1000, maximum: 150000, default: 80000 },
       },
       additionalProperties: false,
@@ -105,6 +205,12 @@ function fail(request: McpRequest, code: number, message: string, data?: unknown
 }
 function numberArg(value: unknown, fallback: number): number { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
 function stringArg(value: unknown): string | undefined { return typeof value === "string" && value.trim() ? value.trim() : undefined; }
+function requiredStringArg(value: unknown, name: string): string {
+  const parsed = stringArg(value);
+  if (!parsed) throw new Error(`${name} is required`);
+  return parsed;
+}
+function boolArg(value: unknown, fallback: boolean): boolean { return typeof value === "boolean" ? value : fallback; }
 function objectArg(value: unknown): Record<string, string | number | boolean | null | undefined | Array<string | number | boolean>> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, string | number | boolean | null | undefined | Array<string | number | boolean>>)
@@ -117,7 +223,7 @@ function hasScope(scope: string | undefined, required: "arms.read" | "arms.write
 async function callTool(name: string, args: Record<string, unknown>, scope?: string): Promise<unknown> {
   if (name === "arms_status") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
-    return { service: "arms-client-bridge", version: "0.2.2", ...bridgeHighLevelStatus() };
+    return { service: "arms-client-bridge", version: SERVER_VERSION, ...bridgeHighLevelStatus() };
   }
   if (name === "arms_list_locations") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
@@ -125,21 +231,43 @@ async function callTool(name: string, args: Record<string, unknown>, scope?: str
   }
   if (name === "arms_verify_location") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
-    return verifyConfiguredLocation(stringArg(args.location_id));
+    return verifyLocation(requiredStringArg(args.location_id, "location_id"));
+  }
+  if (name === "arms_list_contacts") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return listContacts(requiredStringArg(args.location_id, "location_id"), stringArg(args.search), numberArg(args.limit, 20));
+  }
+  if (name === "arms_get_contact") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return getContact(requiredStringArg(args.location_id, "location_id"), requiredStringArg(args.contact_id, "contact_id"));
+  }
+  if (name === "arms_list_workflows") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return listWorkflows(requiredStringArg(args.location_id, "location_id"));
+  }
+  if (name === "arms_list_custom_fields") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return listCustomFields(requiredStringArg(args.location_id, "location_id"), stringArg(args.model) ?? "contact");
+  }
+  if (name === "arms_list_calendars") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return listCalendars(requiredStringArg(args.location_id, "location_id"), boolArg(args.show_drafted, true));
+  }
+  if (name === "arms_list_products") {
+    if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
+    return listProducts(requiredStringArg(args.location_id, "location_id"), numberArg(args.limit, 100), stringArg(args.search));
   }
   if (name === "arms_highlevel_get") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
-    const path = stringArg(args.path);
-    if (!path) throw new Error("path is required");
+    const path = requiredStringArg(args.path, "path");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";
     return highLevelRequest({ method: "GET", path, locationId: stringArg(args.location_id), authMode, query: objectArg(args.query), version: stringArg(args.version), maxChars: numberArg(args.max_chars, 80_000) });
   }
   if (name === "arms_highlevel_mutate") {
     if (!hasScope(scope, "arms.write")) throw new Error("insufficient_scope: arms.write is required");
-    const path = stringArg(args.path);
-    const method = stringArg(args.method)?.toUpperCase();
-    if (!path) throw new Error("path is required");
-    if (!method || !["POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("method must be POST, PUT, PATCH, or DELETE");
+    const path = requiredStringArg(args.path, "path");
+    const method = requiredStringArg(args.method, "method").toUpperCase();
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("method must be POST, PUT, PATCH, or DELETE");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";
     return highLevelRequest({ method: method as "POST" | "PUT" | "PATCH" | "DELETE", path, locationId: stringArg(args.location_id), authMode, query: objectArg(args.query), body: args.body, version: stringArg(args.version), maxChars: numberArg(args.max_chars, 80_000) });
   }
@@ -156,8 +284,8 @@ export async function handleMcpRequest(request: McpRequest, scope?: string): Pro
     return ok(request, {
       protocolVersion: requestedVersion,
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "ARMS Client Bridge", version: "0.2.2" },
-      instructions: "Internal ARMS bridge for HighLevel agency and client sub-account operations. Read current state before writes. Use location-scoped auth for client CRM data and agency-scoped auth for agency resources.",
+      serverInfo: { name: "ARMS Client Bridge", version: SERVER_VERSION },
+      instructions: "Agency-first ARMS bridge for HighLevel. Search/list clients with agency auth, then pass an explicit location_id for all client CRM operations. Read current state before writes.",
     });
   }
   if (request.method === "ping") return ok(request, {});
