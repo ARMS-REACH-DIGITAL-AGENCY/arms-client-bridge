@@ -33,32 +33,30 @@ function companyId(): string {
   return env("HIGHLEVEL_COMPANY_ID");
 }
 
-function defaultLocationId(): string {
-  return env("HIGHLEVEL_DEFAULT_LOCATION_ID");
+function requiredLocationId(locationId?: string): string {
+  const resolved = locationId?.trim();
+  if (!resolved) throw new Error("location_id is required for client/sub-account operations");
+  return resolved;
 }
 
 function locationPitMap(): Record<string, string> {
   const raw = env("HIGHLEVEL_LOCATION_PITS");
-  let parsed: Record<string, string> = {};
-  if (raw) {
-    try {
-      const value = JSON.parse(raw) as unknown;
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        parsed = Object.fromEntries(
-          Object.entries(value as Record<string, unknown>)
-            .filter(([, token]) => typeof token === "string" && token.trim())
-            .map(([id, token]) => [id, (token as string).trim()]),
-        );
-      }
-    } catch {
+  if (!raw) return {};
+
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new Error("HIGHLEVEL_LOCATION_PITS must be a JSON object mapping location IDs to PITs");
     }
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, token]) => typeof token === "string" && token.trim())
+        .map(([id, token]) => [id, (token as string).trim()]),
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("HIGHLEVEL_LOCATION_PITS")) throw error;
+    throw new Error("HIGHLEVEL_LOCATION_PITS must be a JSON object mapping location IDs to PITs");
   }
-
-  const legacySusiePit = env("HIGHLEVEL_SUSIE_PIT");
-  const defaultId = defaultLocationId();
-  if (legacySusiePit && defaultId && !parsed[defaultId]) parsed[defaultId] = legacySusiePit;
-  return parsed;
 }
 
 function decodePathname(value: string): string {
@@ -91,7 +89,7 @@ function buildHighLevelUrl(path: string): { path: string; url: URL } {
 
   const normalizedPathname = decodePathname(url.pathname);
   if (normalizedPathname === "/oauth" || normalizedPathname.startsWith("/oauth/")) {
-    throw new Error("OAuth/token endpoints are blocked from the generic bridge tools");
+    throw new Error("OAuth/token endpoints are blocked from generic bridge tools");
   }
 
   return { path: trimmed, url };
@@ -143,13 +141,11 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
   const agencyToken = agencyPit();
   const agencyCompanyId = companyId();
   if (!agencyToken) {
-    throw new Error(
-      `No location PIT is configured for ${locationId}, and HIGHLEVEL_AGENCY_PIT is not configured`,
-    );
+    throw new Error(`HIGHLEVEL_AGENCY_PIT is required to derive access for ${locationId}`);
   }
   if (!agencyCompanyId) {
     throw new Error(
-      `No location PIT is configured for ${locationId}. Set HIGHLEVEL_COMPANY_ID so the agency token can be exchanged for a location token.`,
+      `HIGHLEVEL_COMPANY_ID is required to derive location access for ${locationId}; configure a location PIT only as a fallback`,
     );
   }
 
@@ -171,7 +167,7 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
     const fallbackMessage =
       typeof data === "string" ? data : JSON.stringify(redact(data ?? { status: response.status }));
     throw new Error(
-      `HighLevel agency-to-location token exchange failed (${response.status}). Configure a location PIT for ${locationId}. ${fallbackMessage.slice(0, 1200)}`,
+      `HighLevel agency-to-location token exchange failed (${response.status}) for ${locationId}. ${fallbackMessage.slice(0, 1200)}`,
     );
   }
 
@@ -196,12 +192,7 @@ async function resolveToken(authMode: "agency" | "location", locationId?: string
     if (!token) throw new Error("HIGHLEVEL_AGENCY_PIT is not configured");
     return token;
   }
-
-  const resolvedLocationId = locationId?.trim() || defaultLocationId();
-  if (!resolvedLocationId) {
-    throw new Error("location_id is required unless HIGHLEVEL_DEFAULT_LOCATION_ID is configured");
-  }
-  return deriveLocationAccessToken(resolvedLocationId);
+  return deriveLocationAccessToken(requiredLocationId(locationId));
 }
 
 function addQuery(url: URL, query?: Record<string, QueryValue>): void {
@@ -228,7 +219,7 @@ export async function highLevelRequest(options: RequestOptions): Promise<JsonObj
   const path = built.path;
   const url = built.url;
   const authMode = options.authMode ?? "location";
-  const resolvedLocationId = options.locationId?.trim() || defaultLocationId();
+  const resolvedLocationId = authMode === "location" ? requiredLocationId(options.locationId) : options.locationId?.trim();
   const token = await resolveToken(authMode, resolvedLocationId);
   addQuery(url, options.query);
 
@@ -284,10 +275,8 @@ export async function listLocations(search?: string, limit = 100): Promise<JsonO
   });
 }
 
-export async function verifyConfiguredLocation(locationId?: string): Promise<JsonObject> {
-  const resolvedLocationId = locationId?.trim() || defaultLocationId();
-  if (!resolvedLocationId) throw new Error("No location_id supplied and no default location is configured");
-
+export async function verifyLocation(locationId: string): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
   return highLevelRequest({
     method: "GET",
     path: `/locations/${encodeURIComponent(resolvedLocationId)}`,
@@ -295,6 +284,97 @@ export async function verifyConfiguredLocation(locationId?: string): Promise<Jso
     authMode: "location",
     version: "v3",
     maxChars: 40_000,
+  });
+}
+
+export async function listContacts(
+  locationId: string,
+  search?: string,
+  limit = 20,
+): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
+  return highLevelRequest({
+    method: "GET",
+    path: "/contacts/",
+    locationId: resolvedLocationId,
+    authMode: "location",
+    query: {
+      locationId: resolvedLocationId,
+      limit: Math.min(Math.max(limit, 1), 100),
+      ...(search?.trim() ? { query: search.trim() } : {}),
+    },
+    version: "2021-07-28",
+    maxChars: 120_000,
+  });
+}
+
+export async function getContact(locationId: string, contactId: string): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
+  const resolvedContactId = contactId.trim();
+  if (!resolvedContactId) throw new Error("contact_id is required");
+  return highLevelRequest({
+    method: "GET",
+    path: `/contacts/${encodeURIComponent(resolvedContactId)}`,
+    locationId: resolvedLocationId,
+    authMode: "location",
+    version: "2021-07-28",
+    maxChars: 80_000,
+  });
+}
+
+export async function listWorkflows(locationId: string): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
+  return highLevelRequest({
+    method: "GET",
+    path: "/workflows/",
+    locationId: resolvedLocationId,
+    authMode: "location",
+    query: { locationId: resolvedLocationId },
+    version: "v3",
+    maxChars: 120_000,
+  });
+}
+
+export async function listCustomFields(locationId: string, model = "contact"): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
+  return highLevelRequest({
+    method: "GET",
+    path: `/locations/${encodeURIComponent(resolvedLocationId)}/customFields`,
+    locationId: resolvedLocationId,
+    authMode: "location",
+    query: { model },
+    version: "2023-02-21",
+    maxChars: 120_000,
+  });
+}
+
+export async function listCalendars(locationId: string, showDrafted = true): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
+  return highLevelRequest({
+    method: "GET",
+    path: "/calendars/",
+    locationId: resolvedLocationId,
+    authMode: "location",
+    query: { locationId: resolvedLocationId, showDrafted },
+    version: "v3",
+    maxChars: 120_000,
+  });
+}
+
+export async function listProducts(locationId: string, limit = 100, search?: string): Promise<JsonObject> {
+  const resolvedLocationId = requiredLocationId(locationId);
+  return highLevelRequest({
+    method: "GET",
+    path: "/products/",
+    locationId: resolvedLocationId,
+    authMode: "location",
+    query: {
+      locationId: resolvedLocationId,
+      limit: Math.min(Math.max(limit, 1), 100),
+      ...(search?.trim() ? { search: search.trim() } : {}),
+    },
+    version: "v3",
+    maxChars: 120_000,
   });
 }
 
@@ -310,8 +390,8 @@ export function bridgeHighLevelStatus(): JsonObject {
   return {
     highlevel_agency_pit_configured: Boolean(agencyPit()),
     highlevel_company_id_configured: Boolean(companyId()),
-    highlevel_default_location_id: defaultLocationId() || null,
-    highlevel_location_pit_count: locationPitCount,
+    highlevel_agency_first_ready: Boolean(agencyPit() && companyId()),
+    highlevel_location_pit_fallback_count: locationPitCount,
     highlevel_location_pit_configuration_error: locationPitParseError,
   };
 }
