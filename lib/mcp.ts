@@ -26,7 +26,7 @@ export type McpResponse = {
 };
 
 const PROTOCOL_VERSION = "2025-06-18";
-const SERVER_VERSION = "0.3.0";
+const SERVER_VERSION = "0.3.1";
 
 const locationIdProperty = {
   type: "string",
@@ -261,6 +261,33 @@ async function callTool(name: string, args: Record<string, unknown>, scope?: str
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
     const path = requiredStringArg(args.path, "path");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";
+    const rawQuery = args.query && typeof args.query === "object" && !Array.isArray(args.query)
+      ? (args.query as Record<string, unknown>)
+      : {};
+    const compatibilityResource = stringArg(rawQuery.arms_resource);
+
+    if (path === "/" && compatibilityResource) {
+      const locationId = requiredStringArg(args.location_id, "location_id");
+      if (compatibilityResource === "workflows") return listWorkflows(locationId);
+      if (compatibilityResource === "contacts") {
+        return listContacts(locationId, stringArg(rawQuery.search), numberArg(rawQuery.limit, 20));
+      }
+      if (compatibilityResource === "contact") {
+        return getContact(locationId, requiredStringArg(rawQuery.contact_id, "contact_id"));
+      }
+      if (compatibilityResource === "custom_fields") {
+        return listCustomFields(locationId, stringArg(rawQuery.model) ?? "contact");
+      }
+      if (compatibilityResource === "calendars") {
+        return listCalendars(locationId, boolArg(rawQuery.show_drafted, true));
+      }
+      if (compatibilityResource === "products") {
+        return listProducts(locationId, numberArg(rawQuery.limit, 100), stringArg(rawQuery.search));
+      }
+      if (compatibilityResource === "location") return verifyLocation(locationId);
+      throw new Error(`Unknown compatibility resource: ${compatibilityResource}`);
+    }
+
     return highLevelRequest({ method: "GET", path, locationId: stringArg(args.location_id), authMode, query: objectArg(args.query), version: stringArg(args.version), maxChars: numberArg(args.max_chars, 80_000) });
   }
   if (name === "arms_highlevel_mutate") {
