@@ -20,6 +20,7 @@ type CachedLocationToken = {
 };
 
 const locationTokenCache = new Map<string, CachedLocationToken>();
+let discoveredCompanyId = "";
 
 function env(name: string): string {
   return process.env[name]?.trim() ?? "";
@@ -29,7 +30,7 @@ function agencyPit(): string {
   return env("HIGHLEVEL_AGENCY_PIT");
 }
 
-function companyId(): string {
+function configuredCompanyId(): string {
   return env("HIGHLEVEL_COMPANY_ID");
 }
 
@@ -131,6 +132,40 @@ function truncate(value: unknown, maxChars: number): { data: unknown; truncated:
   };
 }
 
+async function resolveAgencyCompanyId(): Promise<string> {
+  const configured = configuredCompanyId();
+  if (configured) return configured;
+  if (discoveredCompanyId) return discoveredCompanyId;
+
+  const token = agencyPit();
+  if (!token) throw new Error("HIGHLEVEL_AGENCY_PIT is not configured");
+
+  const url = new URL(`${HIGHLEVEL_BASE_URL}/locations/search`);
+  url.searchParams.set("limit", "1");
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      Version: "v3",
+    },
+    cache: "no-store",
+  });
+  const data = await responseBody(response);
+  if (!response.ok) {
+    throw new Error(`Unable to discover HighLevel agency company ID (${response.status})`);
+  }
+
+  const object = data && typeof data === "object" ? (data as JsonObject) : {};
+  const locations = Array.isArray(object.locations) ? object.locations : [];
+  const first = locations[0] && typeof locations[0] === "object" ? (locations[0] as JsonObject) : {};
+  const companyId = String(first.companyId ?? "").trim();
+  if (!companyId) throw new Error("HighLevel agency location search returned no companyId");
+
+  discoveredCompanyId = companyId;
+  return companyId;
+}
+
 async function deriveLocationAccessToken(locationId: string): Promise<string> {
   const directPit = locationPitMap()[locationId];
   if (directPit) return directPit;
@@ -139,26 +174,18 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
 
   const agencyToken = agencyPit();
-  const agencyCompanyId = companyId();
-  if (!agencyToken) {
-    throw new Error(`HIGHLEVEL_AGENCY_PIT is required to derive access for ${locationId}`);
-  }
-  if (!agencyCompanyId) {
-    throw new Error(
-      `HIGHLEVEL_COMPANY_ID is required to derive location access for ${locationId}; configure a location PIT only as a fallback`,
-    );
-  }
+  if (!agencyToken) throw new Error(`HIGHLEVEL_AGENCY_PIT is required to derive access for ${locationId}`);
+  const agencyCompanyId = await resolveAgencyCompanyId();
 
-  const form = new URLSearchParams({ companyId: agencyCompanyId, locationId });
-  const response = await fetch(`${HIGHLEVEL_BASE_URL}/oauth/locationToken`, {
+  const response = await fetch(`${HIGHLEVEL_BASE_URL}/oauth/location-token`, {
     method: "POST",
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${agencyToken}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Version: "2021-07-28",
+      "Content-Type": "application/json",
+      Version: "v3",
     },
-    body: form.toString(),
+    body: JSON.stringify({ companyId: agencyCompanyId, locationId }),
     cache: "no-store",
   });
 
@@ -178,7 +205,7 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
   if (!token) throw new Error("HighLevel location token exchange returned no access token");
 
   const expiresIn =
-    data && typeof data === "object" ? Number((data as JsonObject).expires_in ?? 3600) : 3600;
+    data && typeof data === "object" ? Number((data as JsonObject).expires_in ?? (data as JsonObject).expiresIn ?? 3600) : 3600;
   locationTokenCache.set(locationId, {
     token,
     expiresAt: Date.now() + Math.max(300, expiresIn - 120) * 1000,
@@ -210,7 +237,7 @@ function addQuery(url: URL, query?: Record<string, QueryValue>): void {
 function inferredVersion(path: string, explicit?: string): string {
   if (explicit?.trim()) return explicit.trim();
   if (path === "/locations/search" || /^\/locations\/[^/]+$/.test(path)) return "v3";
-  return "2021-07-28";
+  return "v3";
 }
 
 export async function highLevelRequest(options: RequestOptions): Promise<JsonObject> {
@@ -261,8 +288,6 @@ export async function listLocations(search?: string, limit = 100): Promise<JsonO
   const query: Record<string, QueryValue> = {
     limit: Math.min(Math.max(limit, 1), 100),
   };
-  const agencyCompanyId = companyId();
-  if (agencyCompanyId) query.companyId = agencyCompanyId;
   if (search?.trim()) query.search = search.trim();
 
   return highLevelRequest({
@@ -303,7 +328,7 @@ export async function listContacts(
       limit: Math.min(Math.max(limit, 1), 100),
       ...(search?.trim() ? { query: search.trim() } : {}),
     },
-    version: "2021-07-28",
+    version: "2023-02-21",
     maxChars: 120_000,
   });
 }
@@ -317,7 +342,7 @@ export async function getContact(locationId: string, contactId: string): Promise
     path: `/contacts/${encodeURIComponent(resolvedContactId)}`,
     locationId: resolvedLocationId,
     authMode: "location",
-    version: "2021-07-28",
+    version: "v3",
     maxChars: 80_000,
   });
 }
@@ -389,8 +414,9 @@ export function bridgeHighLevelStatus(): JsonObject {
 
   return {
     highlevel_agency_pit_configured: Boolean(agencyPit()),
-    highlevel_company_id_configured: Boolean(companyId()),
-    highlevel_agency_first_ready: Boolean(agencyPit() && companyId()),
+    highlevel_company_id_configured: Boolean(configuredCompanyId()),
+    highlevel_company_id_auto_discovery: true,
+    highlevel_agency_first_ready: Boolean(agencyPit()),
     highlevel_location_pit_fallback_count: locationPitCount,
     highlevel_location_pit_configuration_error: locationPitParseError,
   };
