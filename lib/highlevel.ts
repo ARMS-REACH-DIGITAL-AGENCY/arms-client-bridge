@@ -60,6 +60,20 @@ function locationPitMap(): Record<string, string> {
   }
 }
 
+const LOCATION_ID_ALIASES: Record<string, string[]> = {
+  QXvZmR2sRT3hTnkxA4nO: ["QXvZmR2sRT3hTnkxA4n0"],
+  QXvZmR2sRT3hTnkxA4n0: ["QXvZmR2sRT3hTnkxA4nO"],
+};
+
+function directLocationPit(locationId: string): string {
+  const pits = locationPitMap();
+  if (pits[locationId]) return pits[locationId];
+  for (const alias of LOCATION_ID_ALIASES[locationId] ?? []) {
+    if (pits[alias]) return pits[alias];
+  }
+  return "";
+}
+
 function decodePathname(value: string): string {
   let decoded = value;
   for (let i = 0; i < 3; i += 1) {
@@ -167,7 +181,7 @@ async function resolveAgencyCompanyId(): Promise<string> {
 }
 
 async function deriveLocationAccessToken(locationId: string): Promise<string> {
-  const directPit = locationPitMap()[locationId];
+  const directPit = directLocationPit(locationId);
   if (directPit) return directPit;
 
   const cached = locationTokenCache.get(locationId);
