@@ -6,7 +6,7 @@ Internal MCP gateway between ChatGPT and ARMS/HighLevel.
 
 `https://client-bridge.armsreachdigital.agency`
 
-MCP endpoint: `/mcp`
+MCP endpoint: `/mcp` (the base URL is also supported for clients that require it)
 
 Health endpoint: `/api/health`
 
@@ -52,6 +52,8 @@ The generic tools only call `https://services.leadconnectorhq.com`, require rela
 In ChatGPT developer mode, create a custom MCP app using:
 
 `https://client-bridge.armsreachdigital.agency/mcp`
+
+If a connector only accepts the base server URL, use `https://client-bridge.armsreachdigital.agency`; it now serves the same MCP transport. The human-readable status page is `/status`.
 
 Choose OAuth authentication. The bridge supports OAuth discovery, dynamic client registration, PKCE S256, access tokens, and refresh tokens. During the first connection, enter `BRIDGE_ADMIN_PASSWORD` on the ARMS authorization page.
 
