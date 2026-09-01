@@ -32,7 +32,7 @@ Minimum secure configuration:
 - `BRIDGE_SIGNING_SECRET` — at least 32 random characters
 - `BRIDGE_ADMIN_PASSWORD` — password used on the bridge authorization page
 - `HIGHLEVEL_DEFAULT_LOCATION_ID=QLS1wvtsvzL1YsLFxYcM` for Susie Sculpts
-- `HIGHLEVEL_AGENCY_PIT` and `HIGHLEVEL_COMPANY_ID`, or a location PIT in `HIGHLEVEL_LOCATION_PITS`
+- `HIGHLEVEL_AGENCY_PIT` and `HIGHLEVEL_COMPANY_ID`. The agency PIT must include HighLevel's `oauth.write` scope so the bridge can obtain a location token dynamically for every current and future sub-account.
 
 Optional:
 
@@ -45,7 +45,7 @@ Optional:
 - `arms_highlevel_get` — read-only generic HighLevel API request.
 - `arms_highlevel_mutate` — HighLevel POST/PUT/PATCH/DELETE request; marked destructive so clients can require confirmation.
 
-The generic tools only call `https://services.leadconnectorhq.com`, require relative API paths, and block `/oauth/*` so HighLevel tokens cannot be retrieved through the MCP layer.
+The generic tools only call `https://services.leadconnectorhq.com`, require relative API paths, and block `/oauth/*` so HighLevel tokens cannot be retrieved through the MCP layer. Use `api_path` for advanced requests; `path` remains supported for existing clients.
 
 ## ChatGPT custom app
 

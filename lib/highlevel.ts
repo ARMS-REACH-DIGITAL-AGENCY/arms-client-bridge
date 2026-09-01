@@ -191,15 +191,17 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
   if (!agencyToken) throw new Error(`HIGHLEVEL_AGENCY_PIT is required to derive access for ${locationId}`);
   const agencyCompanyId = await resolveAgencyCompanyId();
 
+  // HighLevel requires a form-encoded body for this agency-to-location exchange.
+  const form = new URLSearchParams({ companyId: agencyCompanyId, locationId });
   const response = await fetch(`${HIGHLEVEL_BASE_URL}/oauth/location-token`, {
     method: "POST",
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${agencyToken}`,
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       Version: "v3",
     },
-    body: JSON.stringify({ companyId: agencyCompanyId, locationId }),
+    body: form.toString(),
     cache: "no-store",
   });
 
@@ -207,8 +209,11 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
   if (!response.ok) {
     const fallbackMessage =
       typeof data === "string" ? data : JSON.stringify(redact(data ?? { status: response.status }));
+    const scopeHint = response.status === 401
+      ? " Verify that HIGHLEVEL_AGENCY_PIT is an agency-level Private Integration Token with the oauth.write scope."
+      : "";
     throw new Error(
-      `HighLevel agency-to-location token exchange failed (${response.status}) for ${locationId}. ${fallbackMessage.slice(0, 1200)}`,
+      `HighLevel agency-to-location token exchange failed (${response.status}) for ${locationId}.${scopeHint} ${fallbackMessage.slice(0, 1200)}`,
     );
   }
 
@@ -431,6 +436,8 @@ export function bridgeHighLevelStatus(): JsonObject {
     highlevel_company_id_configured: Boolean(configuredCompanyId()),
     highlevel_company_id_auto_discovery: true,
     highlevel_agency_first_ready: Boolean(agencyPit()),
+    highlevel_location_token_exchange_mode: "agency-to-location",
+    highlevel_location_token_exchange_requires_oauth_write: true,
     highlevel_location_pit_fallback_count: locationPitCount,
     highlevel_location_pit_configuration_error: locationPitParseError,
   };

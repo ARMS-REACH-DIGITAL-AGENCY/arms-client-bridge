@@ -26,7 +26,7 @@ export type McpResponse = {
 };
 
 const PROTOCOL_VERSION = "2025-06-18";
-const SERVER_VERSION = "0.3.1";
+const SERVER_VERSION = "0.3.2";
 
 const locationIdProperty = {
   type: "string",
@@ -162,9 +162,10 @@ const tools = [
     description: "Advanced fallback GET against the official HighLevel API. Prefer the typed ARMS tools above.",
     inputSchema: {
       type: "object",
-      required: ["path"],
+      required: [],
       properties: {
-        path: { type: "string", description: "Relative HighLevel API path beginning with /." },
+        api_path: { type: "string", description: "Relative HighLevel API path beginning with /. Prefer this field over path." },
+        path: { type: "string", description: "Legacy alias for api_path." },
         location_id: { type: "string", description: "Required for location-scoped requests." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
         query: { type: "object", additionalProperties: true },
@@ -181,10 +182,11 @@ const tools = [
     description: "Advanced approved write operation against HighLevel. Read current state first and prefer future typed write tools when available.",
     inputSchema: {
       type: "object",
-      required: ["method", "path"],
+      required: ["method"],
       properties: {
         method: { type: "string", enum: ["POST", "PUT", "PATCH", "DELETE"] },
-        path: { type: "string", description: "Relative HighLevel API path beginning with /." },
+        api_path: { type: "string", description: "Relative HighLevel API path beginning with /. Prefer this field over path." },
+        path: { type: "string", description: "Legacy alias for api_path." },
         location_id: { type: "string", description: "Required for location-scoped requests." },
         auth_mode: { type: "string", enum: ["location", "agency"], default: "location" },
         query: { type: "object", additionalProperties: true },
@@ -259,7 +261,7 @@ async function callTool(name: string, args: Record<string, unknown>, scope?: str
   }
   if (name === "arms_highlevel_get") {
     if (!hasScope(scope, "arms.read")) throw new Error("insufficient_scope: arms.read is required");
-    const path = requiredStringArg(args.path, "path");
+    const path = requiredStringArg(args.api_path ?? args.path, "api_path");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";
     const rawQuery = args.query && typeof args.query === "object" && !Array.isArray(args.query)
       ? (args.query as Record<string, unknown>)
@@ -292,7 +294,7 @@ async function callTool(name: string, args: Record<string, unknown>, scope?: str
   }
   if (name === "arms_highlevel_mutate") {
     if (!hasScope(scope, "arms.write")) throw new Error("insufficient_scope: arms.write is required");
-    const path = requiredStringArg(args.path, "path");
+    const path = requiredStringArg(args.api_path ?? args.path, "api_path");
     const method = requiredStringArg(args.method, "method").toUpperCase();
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("method must be POST, PUT, PATCH, or DELETE");
     const authMode = args.auth_mode === "agency" ? "agency" : "location";

@@ -8,7 +8,7 @@ export async function GET() {
     {
       ok: true,
       service: "arms-client-bridge",
-      version: "0.2.0",
+      version: "0.3.2",
       mcp_endpoint: "/mcp",
       oauth_discovery: "/.well-known/oauth-authorization-server",
       bridge_auth_configured: bridgeAuthConfigured(),
