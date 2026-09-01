@@ -57,6 +57,8 @@ If a connector only accepts the base server URL, use `https://client-bridge.arms
 
 Choose OAuth authentication. The bridge supports OAuth discovery, dynamic client registration, PKCE S256, access tokens, and refresh tokens. During the first connection, enter `BRIDGE_ADMIN_PASSWORD` on the ARMS authorization page.
 
+The bridge supports both the legacy MCP initialization flow and the current stateless MCP discovery flow, so ChatGPT and Claude can use the same connection URL.
+
 ## HighLevel notes
 
 HighLevel PITs are static/fixed scoped access tokens intended for internal server-to-server integrations. Rotate them periodically and update the Vercel secret when rotated.

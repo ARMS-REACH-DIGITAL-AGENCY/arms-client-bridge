@@ -1,5 +1,6 @@
 import { authorizeBridgeRequest, unauthorizedResponse } from "../../lib/bridge-auth";
-import { handleMcpRequest, type McpRequest } from "../../lib/mcp";
+import { handleCompatibleMcpRequest } from "../../lib/mcp-protocol";
+import { type McpRequest } from "../../lib/mcp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,12 +54,12 @@ export async function POST(request: Request) {
   };
 
   if (Array.isArray(payload)) {
-    const results = (await Promise.all(payload.map((item) => handleMcpRequest(item, auth.scope)))).filter(Boolean);
+    const results = (await Promise.all(payload.map((item) => handleCompatibleMcpRequest(item, auth.scope, protocolVersion)))).filter(Boolean);
     if (results.length === 0) return new Response(null, { status: 202, headers });
     return Response.json(results, { headers });
   }
 
-  const result = await handleMcpRequest(payload, auth.scope);
+  const result = await handleCompatibleMcpRequest(payload, auth.scope, protocolVersion);
   if (!result) return new Response(null, { status: 202, headers });
   return Response.json(result, { headers });
 }
