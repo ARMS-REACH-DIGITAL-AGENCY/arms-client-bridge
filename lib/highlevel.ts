@@ -1,4 +1,5 @@
 const HIGHLEVEL_BASE_URL = "https://services.leadconnectorhq.com";
+import { agencyOAuthAccessToken, highLevelOAuthStatus } from "./highlevel-oauth";
 
 type JsonObject = Record<string, unknown>;
 type QueryValue = string | number | boolean | null | undefined | Array<string | number | boolean>;
@@ -28,6 +29,14 @@ function env(name: string): string {
 
 function agencyPit(): string {
   return env("HIGHLEVEL_AGENCY_PIT");
+}
+
+async function agencyToken(): Promise<string> {
+  const oauthToken = await agencyOAuthAccessToken();
+  if (oauthToken) return oauthToken;
+  const pit = agencyPit();
+  if (pit) return pit;
+  throw new Error("No HighLevel agency OAuth token or Private Integration Token is configured");
 }
 
 function configuredCompanyId(): string {
@@ -151,8 +160,7 @@ async function resolveAgencyCompanyId(): Promise<string> {
   if (configured) return configured;
   if (discoveredCompanyId) return discoveredCompanyId;
 
-  const token = agencyPit();
-  if (!token) throw new Error("HIGHLEVEL_AGENCY_PIT is not configured");
+  const token = await agencyToken();
 
   const url = new URL(`${HIGHLEVEL_BASE_URL}/locations/search`);
   url.searchParams.set("limit", "1");
@@ -187,8 +195,7 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
   const cached = locationTokenCache.get(locationId);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
 
-  const agencyToken = agencyPit();
-  if (!agencyToken) throw new Error(`HIGHLEVEL_AGENCY_PIT is required to derive access for ${locationId}`);
+  const agencyAccessToken = await agencyToken();
   const agencyCompanyId = await resolveAgencyCompanyId();
 
   // HighLevel requires a form-encoded body for this agency-to-location exchange.
@@ -197,7 +204,7 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
     method: "POST",
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${agencyToken}`,
+      Authorization: `Bearer ${agencyAccessToken}`,
       "Content-Type": "application/x-www-form-urlencoded",
       Version: "v3",
     },
@@ -210,7 +217,7 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
     const fallbackMessage =
       typeof data === "string" ? data : JSON.stringify(redact(data ?? { status: response.status }));
     const scopeHint = response.status === 401
-      ? " Verify that HIGHLEVEL_AGENCY_PIT is an agency-level Private Integration Token with the oauth.write scope."
+      ? " Verify that the agency OAuth installation is complete and includes the oauth.write scope."
       : "";
     throw new Error(
       `HighLevel agency-to-location token exchange failed (${response.status}) for ${locationId}.${scopeHint} ${fallbackMessage.slice(0, 1200)}`,
@@ -234,9 +241,7 @@ async function deriveLocationAccessToken(locationId: string): Promise<string> {
 
 async function resolveToken(authMode: "agency" | "location", locationId?: string): Promise<string> {
   if (authMode === "agency") {
-    const token = agencyPit();
-    if (!token) throw new Error("HIGHLEVEL_AGENCY_PIT is not configured");
-    return token;
+    return agencyToken();
   }
   return deriveLocationAccessToken(requiredLocationId(locationId));
 }
@@ -440,5 +445,6 @@ export function bridgeHighLevelStatus(): JsonObject {
     highlevel_location_token_exchange_requires_oauth_write: true,
     highlevel_location_pit_fallback_count: locationPitCount,
     highlevel_location_pit_configuration_error: locationPitParseError,
+    ...highLevelOAuthStatus(),
   };
 }

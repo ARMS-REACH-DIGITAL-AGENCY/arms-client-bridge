@@ -18,7 +18,8 @@ ChatGPT authenticates to this bridge with the bridge's OAuth flow (or `BRIDGE_AP
 
 For internal ARMS access, the bridge supports HighLevel Private Integration Tokens (PITs):
 
-- `HIGHLEVEL_AGENCY_PIT` for agency-level APIs.
+- `HIGHLEVEL_AGENCY_PIT` for agency-level APIs (fallback).
+- `HIGHLEVEL_OAUTH_CLIENT_ID`, `HIGHLEVEL_OAUTH_CLIENT_SECRET`, and `BLOB_READ_WRITE_TOKEN` for durable Marketplace OAuth agency access.
 - `HIGHLEVEL_LOCATION_PITS` for explicit sub-account/location PITs.
 - If no location PIT exists, the bridge attempts HighLevel's documented agency-to-location token exchange using `HIGHLEVEL_AGENCY_PIT` + `HIGHLEVEL_COMPANY_ID`.
 

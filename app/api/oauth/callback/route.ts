@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { completeAgencyOAuthAuthorization } from "../../../../lib/highlevel-oauth";
 
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
@@ -15,11 +16,15 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Token exchange and secure persistence will be enabled after the
-  // HighLevel app Client ID/Secret and final redirect URL are configured.
-  return NextResponse.json({
-    ok: true,
-    status: "authorization_code_received",
-    next: "configure_token_exchange",
-  });
+  try {
+    await completeAgencyOAuthAuthorization(code);
+    return NextResponse.json({
+      ok: true,
+      status: "agency_oauth_connected",
+      message: "ARMS Client Bridge can now obtain sub-account access tokens on demand.",
+    });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "Unable to complete HighLevel OAuth authorization";
+    return NextResponse.json({ ok: false, error: "oauth_connection_failed", message }, { status: 500 });
+  }
 }
