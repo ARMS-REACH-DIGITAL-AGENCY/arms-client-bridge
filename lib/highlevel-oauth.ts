@@ -1,4 +1,4 @@
-import { list, put } from "@vercel/blob";
+import { get, put } from "@vercel/blob";
 
 const HIGHLEVEL_BASE_URL = "https://services.leadconnectorhq.com";
 const TOKEN_PATH = "arms-client-bridge/highlevel-agency-oauth.json";
@@ -72,13 +72,10 @@ async function loadTokens(): Promise<AgencyTokens | null> {
   if (!blobConfigured()) return null;
   if (cachedTokens) return cachedTokens;
 
-  const stored = await list({ prefix: TOKEN_PATH, limit: 1 });
-  const blob = stored.blobs.find((entry) => entry.pathname === TOKEN_PATH);
-  if (!blob) return null;
-
-  const response = await fetch(blob.url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Unable to read OAuth token store (${response.status})`);
-  cachedTokens = await decrypt(await response.text());
+  const result = await get(TOKEN_PATH, { access: "private", useCache: false });
+  if (!result) return null;
+  if (result.statusCode !== 200 || !result.stream) throw new Error("Unable to read OAuth token store");
+  cachedTokens = await decrypt(await new Response(result.stream).text());
   return cachedTokens;
 }
 
@@ -87,7 +84,7 @@ async function saveTokens(tokens: AgencyTokens): Promise<void> {
     throw new Error("BLOB_READ_WRITE_TOKEN and BRIDGE_SIGNING_SECRET are required to store HighLevel OAuth tokens");
   }
   await put(TOKEN_PATH, await encrypt(tokens), {
-    access: "public",
+    access: "private",
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "text/plain",
