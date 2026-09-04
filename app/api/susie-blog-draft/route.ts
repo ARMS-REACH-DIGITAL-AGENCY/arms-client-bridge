@@ -97,6 +97,7 @@ export async function POST(request: Request): Promise<Response> {
         path: "/blogs/site/all",
         locationId: SUSIE_LOCATION_ID,
         authMode: "location",
+        query: { locationId: SUSIE_LOCATION_ID },
         version: "v3",
         maxChars: 40_000,
       }),
