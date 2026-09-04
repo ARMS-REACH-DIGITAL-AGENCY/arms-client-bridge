@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "crypto";
 import { highLevelRequest } from "../../../lib/highlevel";
 
 const SUSIE_LOCATION_ID = "QLS1wvtsvzL1YsLFxYcM";
-const ACCESS_KEY_SHA256 = "f0886bee642d9fc4eb35d7cd108bca4cd3b79a4325dab886654cd913b81442da";
+const ACCESS_KEY_SHA256 = "0ad7ace96937e2c01f321841a370cf9de833013ef03aeba9299f48631f3dba5d";
 const DEFAULT_IMAGE_URL = "https://www.susiesculpts.com/images/logo.png";
 
 type JsonObject = Record<string, unknown>;
@@ -144,7 +144,7 @@ export async function POST(request: Request): Promise<Response> {
     const requestedCategory = stringValue(body.category).toLowerCase();
     const categoryIds = requestedCategory
       ? categories
-          .filter((category) => stringValue(category.name).toLowerCase() === requestedCategory)
+          .filter((category) => stringValue(category.label).toLowerCase() === requestedCategory)
           .map(objectId)
           .filter(Boolean)
       : [];
